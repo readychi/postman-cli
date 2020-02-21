@@ -53,31 +53,58 @@ async function checkCollectionItems (items, context) {
   }
 }
 
+/**
+ * Takes postman request and splits it into different files
+ * @param req
+ * @param context
+ */
 function mapScriptToFile (req, context = '') {
+  mapSectionToFile(req, context, 'file')
+  mapSectionToFile(req, context, 'prerequest')
+}
+
+/**
+ * Finds the script section in the event of a postman request and writes it out into a file
+ * @param req
+ * @param context
+ * @param sectionName
+ */
+function mapSectionToFile (req, context = '', sectionName) {
   const config = require('./lib/config')
-  const tests = req.event && req.event.find((el) => el.listen === 'test')
-  const testScript = tests && tests.script.exec.join('\n')
-  const preRequest = req.event && req.event.find((el) => el.listen === 'prerequest')
-  const preRequestScript = preRequest && preRequest.script.exec.join('\n')
+  const section = req.event && req.event.find((el) => el.listen === sectionName)
+  const sectionScriptJsString = section && section.script.exec.join('\n')
   const path = `${config.POSTMAN_TEST_DIR}/${context}/${req.name}`
 
-  if (testScript && !fs.existsSync(`${path}/test.js`)) {
+  if (sectionScriptJsString && !fs.existsSync(`${path}/${sectionName}.js`)) {
     fs.mkdirSync(path, { recursive: true })
-    fs.writeFileSync(`${path}/test.js`, testScript)
-  }
-
-  if (preRequestScript && !fs.existsSync(`${path}/preRequest.js`)) {
-    fs.mkdirSync(path, { recursive: true })
-    fs.writeFileSync(`${path}/preRequest.js`, preRequestScript)
+    fs.writeFileSync(`${path}/${sectionName}.js`, sectionScriptJsString)
   }
 }
 
+/**
+ * Merges source files back into a request object
+ * @param req
+ * @param context
+ * @returns {Promise<void>}
+ */
 async function mapFileToScript (req, context = '') {
-  const config = require('./lib/config')
-  const testPath = `${config.POSTMAN_TEST_DIR}/${context}/${req.name}/test.js`
-  const preRequestPath = `${config.POSTMAN_TEST_DIR}/${context}/${req.name}/preRequest.js`
   const testIndex = req.event.findIndex((el) => el.listen === 'test')
+  req.event[testIndex].script.exec = mapFileToSection(req, context, 'test')
+
   const preRequestindex = req.event.findIndex((el) => el.listen === 'prerequest')
+  req.event[preRequestindex].script.exec = mapFileToSection(req, context, 'prerequest')
+}
+
+/**
+ * Takes a source file, bundles, and then converts it into a format necessary to create a postman request script field
+ * @param req
+ * @param context
+ * @param sectionName
+ * @returns {Promise<string|string[]>}
+ */
+async function mapFileToSection (req, context = '', sectionName) {
+  const config = require('./lib/config')
+  const testPath = `${config.POSTMAN_TEST_DIR}/${context}/${req.name}/${sectionName}.js`
 
   if (fs.existsSync(testPath)) {
     const b = browserify()
@@ -87,21 +114,8 @@ async function mapFileToScript (req, context = '') {
     const buf = await doBundle()
     const script = buf.toString()
 
-    req.event[testIndex].script.exec = script.split('\n')
+    return script.split('\n')
   } else {
-    req.event[testIndex].script.exec = ''
-  }
-
-  if (fs.existsSync(preRequestPath)) {
-    const b = browserify()
-    b.add(preRequestPath)
-
-    const doBundle = promisify(b.bundle.bind(b))
-    const buf = await doBundle()
-    const script = buf.toString()
-
-    req.event[preRequestindex].script.exec = script.split('\n')
-  } else {
-    req.event[preRequestindex].script.exec = ''
+    return ''
   }
 }
